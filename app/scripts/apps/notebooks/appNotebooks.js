@@ -3,36 +3,51 @@ define([
     'underscore',
     'jquery',
     'marionette',
-    'app',
-    'helpers/uri'
-], function(_, $, Marionette, App, URI) {
+    'app'
+], function(_, $, Marionette, App) {
     'use strict';
 
     /**
      * Submodule which shows notebooks
      */
-    var AppNotebooks = App.module('AppNotebook', {startWithParent: false}),
+    var AppNotebooks,
         executeAction,
         API;
 
-    AppNotebooks.on('start', function() {
-        // Restart global keybindings and start Navbar module
-        App.mousetrap.API.restart();
-        App.AppNavbar.start();
+    AppNotebooks = Marionette.Module.extend({
+        startWithParent: false,
 
-        // Make sidebar region visible
-        $(App.content.el).removeClass('active-row');
+        onStart: function() {
+            App.log('AppNotebook has started');
 
-        App.log('AppNotebook has started');
+            // Start Navbar module
+            App.AppNavbar.start();
+
+            // Make sidebar region visible
+            $(App.content.el).removeClass('active-row');
+
+            // Show a form
+            App.vent.on('form:show', function() {
+                App.vent.trigger('navigate:link', '/notebooks/add');
+            });
+
+            // Re render notebook's list after synchronizing
+            App.vent.on('sync:after', API.listNotebooks, API);
+        },
+
+        onStop: function() {
+            App.vent.off('form:show');
+            App.vent.off('sync:after');
+
+            // Destroy the last controller
+            API.controller.destroy();
+            delete API.controller;
+
+            App.log('AppNotebook has stoped');
+        }
     });
 
-    AppNotebooks.on('stop', function() {
-        // Destroy the last controller
-        API.controller.destroy();
-        delete API.controller;
-
-        App.log('AppNotebook has stoped');
-    });
+    AppNotebooks = App.module('AppNotebook', AppNotebooks);
 
     /**
      * The Router
@@ -49,6 +64,11 @@ define([
             '(p/:profile/)tags/add'      : 'addTag',
             '(p/:profile/)tags/edit/:id' : 'editTag',
             '(p/:profile/)tags/remove/:id': 'removeTag'
+        },
+
+        // Start the module
+        onRoute: function() {
+            App.startSubApp('AppNotebook');
         }
     });
 
@@ -56,8 +76,6 @@ define([
      * Start application
      */
     executeAction = function(Controller, action, args) {
-        App.startSubApp('AppNotebook');
-
         // Trigger 'destroy' event to a previous controller
         if (API.controller) {
             API.controller.trigger('destroy:it');
@@ -82,12 +100,15 @@ define([
         },
 
         // Create notebook
-        addNotebook: function(profile, redirect) {
+        addNotebook: function(profile) {
             require(['apps/notebooks/notebooksForm/controller'], function(Form) {
-                executeAction(Form, 'addForm', {
-                    profile: profile,
-                    redirect: redirect
-                });
+                executeAction(Form, 'addForm', { profile: profile });
+            });
+        },
+
+        showAddForm: function(profile, redirect) {
+            require(['apps/notebooks/notebooksForm/controller'], function(Form) {
+                new Form().addForm({ profile: profile, redirect: redirect });
             });
         },
 
@@ -140,21 +161,8 @@ define([
         }
     };
 
-    // Add notebook
-    AppNotebooks.on('showForm', function(profile, redirect) {
-        if (_.isUndefined(redirect)) {
-            App.navigate(URI.link('/notebooks/add'), true);
-        } else {
-            API.addNotebook(profile, redirect);
-        }
-    });
-
-    // Re-render
-    App.on('sync:after', function() {
-        if (App.currentApp.moduleName === 'AppNotebook') {
-            API.listNotebooks();
-        }
-    });
+    // Show a form without starting an entire AppNotebook sub app
+    App.vent.on('notebook:form', API.showAddForm);
 
     /**
      * Register the router
